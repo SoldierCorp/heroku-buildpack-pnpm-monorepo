@@ -1,31 +1,71 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-# Accepts APP_DIR (folder path) or APP_NAME (package.json name)
-APP_DIR="${APP_DIR:-}"
-APP_NAME="${APP_NAME:-}"
+# Heroku buildpack compile script
+# Usage: bin/compile <build_dir> <cache_dir> <env_dir>
+
+BUILD_DIR="${1:-}"
+CACHE_DIR="${2:-}"
+ENV_DIR="${3:-}"
+
+if [ -z "$BUILD_DIR" ]; then
+  echo "Error: build directory not provided to compile script" >&2
+  exit 1
+fi
 
 cd "$BUILD_DIR"
 
-# Install pnpm
-curl -fsSL https://get.pnpm.io/install.sh | SHELL=bash bash -
-export PATH="$HOME/.local/share/pnpm:$PATH"
+# Install pnpm if not already available
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "Installing pnpm..."
+  curl -fsSL https://get.pnpm.io/install.sh | SHELL=bash bash -
+  export PNPM_HOME="$HOME/.local/share/pnpm"
+  export PATH="$PNPM_HOME:$PATH"
+fi
 
-# Install dependencies from root
-pnpm install --frozen-lockfile
+# Ensure there's a package.json at repo root (we run installs from root)
+if [ ! -f package.json ]; then
+  echo "Error: No package.json found in project root ($BUILD_DIR)" >&2
+  exit 1
+fi
 
-# Determine app directory
-if [ -n "$APP_DIR" ]; then
-  TARGET_DIR="$APP_DIR"
-elif [ -n "$APP_NAME" ]; then
-  # Find directory by package.json name
-  TARGET_DIR=$(find . -type f -name package.json -exec grep -l '"name": *"'$APP_NAME'"' {} + | head -n1 | xargs dirname)
-else
-  echo "Error: Set APP_DIR or APP_NAME env variable." >&2
+echo "Installing dependencies from monorepo root (pnpm)..."
+if ! pnpm install --frozen-lockfile; then
+  echo "pnpm install --frozen-lockfile failed, attempting pnpm install without lockfile flag..."
+  pnpm install
+fi
+
+# Determine target directory: prefer APP_DIR (relative path), else locate by APP_NAME (package.json name)
+TARGET_DIR=""
+if [ -n "${APP_DIR:-}" ]; then
+  # Normalize path (remove leading ./ if present)
+  TARGET_DIR="$BUILD_DIR/${APP_DIR#./}"
+elif [ -n "${APP_NAME:-}" ]; then
+  echo "Searching for package with name ${APP_NAME} under $BUILD_DIR"
+  TARGET_DIR=$(grep -Rls "\"name\": *\"${APP_NAME}\"" "$BUILD_DIR" 2>/dev/null | head -n1 || true)
+  if [ -n "$TARGET_DIR" ]; then
+    TARGET_DIR=$(dirname "$TARGET_DIR")
+  fi
+fi
+
+if [ -z "$TARGET_DIR" ]; then
+  echo "Error: could not determine target app directory. Set APP_DIR (e.g. apps/web) or APP_NAME (package.json name)." >&2
+  exit 1
+fi
+
+if [ ! -d "$TARGET_DIR" ]; then
+  echo "Error: resolved TARGET_DIR ($TARGET_DIR) does not exist." >&2
   exit 1
 fi
 
 cd "$TARGET_DIR"
 
-# Build the app
+echo "Building app in $TARGET_DIR"
+
+# Check that package.json has a build script
+if ! grep -q '"build"' package.json; then
+  echo "Error: no \"build\" script found in $TARGET_DIR/package.json" >&2
+  exit 1
+fi
+
 pnpm run build
