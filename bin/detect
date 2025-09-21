@@ -1,3 +1,8 @@
 #!/usr/bin/env bash
-echo "pnpm-monorepo"
-exit 0
+# Simple detect: require a package.json at repo root and pnpm-workspace.yaml (heuristic)
+if [ -f "$1/package.json" ] || [ -f "./package.json" ]; then
+	echo "pnpm-monorepo"
+	exit 0
+fi
+echo "no"
+exit 1

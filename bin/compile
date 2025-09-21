@@ -44,17 +44,58 @@ if ! pnpm -w install --frozen-lockfile --ignore-scripts; then
   fi
 fi
 
+# If Heroku passed env vars via ENV_DIR, read them into the environment so we can use them
+if [ -n "${ENV_DIR:-}" ] && [ -d "${ENV_DIR}" ]; then
+  for f in APP_DIR APP_NAME APP_FILTER; do
+    if [ -z "${!f:-}" ] && [ -f "$ENV_DIR/$f" ]; then
+      export "$f"="$(cat "$ENV_DIR/$f")"
+    fi
+  done
+fi
+
 # Determine target directory: prefer APP_DIR (relative path), else locate by APP_NAME (package.json name)
 TARGET_DIR=""
+echo "DEBUG: APP_DIR='${APP_DIR:-}' APP_NAME='${APP_NAME:-}' APP_FILTER='${APP_FILTER:-}' (read from ENV_DIR if present)"
+
+# 1) Prefer explicit APP_DIR
 if [ -n "${APP_DIR:-}" ]; then
-  # Normalize path (remove leading ./ if present)
   TARGET_DIR="$BUILD_DIR/${APP_DIR#./}"
-elif [ -n "${APP_NAME:-}" ]; then
+fi
+
+# 2) Support APP_FILTER (alias for some buildpacks)
+if [ -z "$TARGET_DIR" ] && [ -n "${APP_FILTER:-}" ]; then
+  TARGET_DIR="$BUILD_DIR/${APP_FILTER#./}"
+fi
+
+# 3) Try APP_NAME matching with several fallbacks
+if [ -z "$TARGET_DIR" ] && [ -n "${APP_NAME:-}" ]; then
   echo "Searching for package with name ${APP_NAME} under $BUILD_DIR"
-  TARGET_DIR=$(grep -Rls "\"name\": *\"${APP_NAME}\"" "$BUILD_DIR" 2>/dev/null | head -n1 || true)
-  if [ -n "$TARGET_DIR" ]; then
-    TARGET_DIR=$(dirname "$TARGET_DIR")
+  # exact match
+  FOUND=$(grep -Rls "\"name\": *\"${APP_NAME}\"" "$BUILD_DIR" 2>/dev/null || true)
+  if [ -n "$FOUND" ]; then
+    TARGET_DIR=$(dirname "$(echo "$FOUND" | head -n1)")
+  else
+    # try unscoped name (part after the slash)
+    UNSCOPED=$(echo "$APP_NAME" | sed 's@.*/@@')
+    echo "DEBUG: trying unscoped name '$UNSCOPED'"
+    FOUND2=$(grep -Rls -E "\"name\": *\"(.*/)?${UNSCOPED}\"" "$BUILD_DIR" 2>/dev/null || true)
+    if [ -n "$FOUND2" ]; then
+      TARGET_DIR=$(dirname "$(echo "$FOUND2" | head -n1)")
+    else
+      # try derive path by taking the part after the slash, e.g., @app/web -> apps/web
+      POSSIBLE="$BUILD_DIR/apps/$UNSCOPED"
+      echo "DEBUG: checking derived path '$POSSIBLE'"
+      if [ -d "$POSSIBLE" ]; then
+        TARGET_DIR="$POSSIBLE"
+      fi
+    fi
   fi
+fi
+
+# 4) Last resort: try to find any apps/* package.json whose name matches end with the unscoped name
+if [ -z "$TARGET_DIR" ]; then
+  echo "DEBUG: listing candidate package.json files under apps/"
+  ls -R apps 2>/dev/null || true
 fi
 
 if [ -z "$TARGET_DIR" ]; then
