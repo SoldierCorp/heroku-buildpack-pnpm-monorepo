@@ -29,10 +29,19 @@ if [ ! -f package.json ]; then
   exit 1
 fi
 
-echo "Installing dependencies from monorepo root (pnpm)..."
-if ! pnpm install --frozen-lockfile; then
-  echo "pnpm install --frozen-lockfile failed, attempting pnpm install without lockfile flag..."
-  pnpm install
+echo "Installing dependencies from monorepo root (pnpm) (ignoring lifecycle scripts)..."
+# Prevent Husky and other dev hooks from running during the build
+export HUSKY=0
+# Use workspace-root install so pnpm recognizes workspace packages regardless of cwd
+if ! pnpm -w install --frozen-lockfile --ignore-scripts; then
+  echo "pnpm -w install --frozen-lockfile --ignore-scripts failed, attempting pnpm -w install --ignore-scripts without lockfile flag..."
+  if ! pnpm -w install --ignore-scripts; then
+    echo "pnpm install failed. If you see an error about a workspace package missing (e.g. \"@leangap/types@workspace:*\"), ensure that:
+  1) the package exists under your workspace (packages/* or similar),
+  2) it's listed by your pnpm-workspace.yaml (or matches the workspace glob), and
+  3) package.json 'name' fields match the workspace dependency names." >&2
+    exit 1
+  fi
 fi
 
 # Determine target directory: prefer APP_DIR (relative path), else locate by APP_NAME (package.json name)
@@ -58,14 +67,15 @@ if [ ! -d "$TARGET_DIR" ]; then
   exit 1
 fi
 
-cd "$TARGET_DIR"
-
-echo "Building app in $TARGET_DIR"
+REL_TARGET=${TARGET_DIR#${BUILD_DIR}/}
+echo "Building app in $TARGET_DIR (workspace filter: ./"$REL_TARGET" )"
 
 # Check that package.json has a build script
-if ! grep -q '"build"' package.json; then
+if [ ! -f "$TARGET_DIR/package.json" ] || ! grep -q '"build"' "$TARGET_DIR/package.json"; then
   echo "Error: no \"build\" script found in $TARGET_DIR/package.json" >&2
   exit 1
 fi
 
-pnpm run build
+# Run the build from the workspace root using a path filter so pnpm understands workspace:* deps
+cd "$BUILD_DIR"
+pnpm --filter "./$REL_TARGET" run build
