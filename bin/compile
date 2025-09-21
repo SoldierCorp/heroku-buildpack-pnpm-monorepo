@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -e
+
+# Accepts APP_DIR (folder path) or APP_NAME (package.json name)
+APP_DIR="${APP_DIR:-}"
+APP_NAME="${APP_NAME:-}"
+
+cd "$BUILD_DIR"
+
+# Install pnpm
+curl -fsSL https://get.pnpm.io/install.sh | SHELL=bash bash -
+export PATH="$HOME/.local/share/pnpm:$PATH"
+
+# Install dependencies from root
+pnpm install --frozen-lockfile
+
+# Determine app directory
+if [ -n "$APP_DIR" ]; then
+  TARGET_DIR="$APP_DIR"
+elif [ -n "$APP_NAME" ]; then
+  # Find directory by package.json name
+  TARGET_DIR=$(find . -type f -name package.json -exec grep -l '"name": *"'$APP_NAME'"' {} + | head -n1 | xargs dirname)
+else
+  echo "Error: Set APP_DIR or APP_NAME env variable." >&2
+  exit 1
+fi
+
+cd "$TARGET_DIR"
+
+# Build the app
+pnpm run build
