@@ -29,19 +29,12 @@ if [ ! -f package.json ]; then
   exit 1
 fi
 
-echo "Installing dependencies from monorepo root (pnpm) (ignoring lifecycle scripts)..."
-# Prevent Husky and other dev hooks from running during the build
-export HUSKY=0
-# Use workspace-root install so pnpm recognizes workspace packages regardless of cwd
-if ! pnpm -w install --frozen-lockfile --ignore-scripts; then
-  echo "pnpm -w install --frozen-lockfile --ignore-scripts failed, attempting pnpm -w install --ignore-scripts without lockfile flag..."
-  if ! pnpm -w install --ignore-scripts; then
-    echo "pnpm install failed. If you see an error about a workspace package missing (e.g. \"@leangap/types@workspace:*\"), ensure that:
-  1) the package exists under your workspace (packages/* or similar),
-  2) it's listed by your pnpm-workspace.yaml (or matches the workspace glob), and
-  3) package.json 'name' fields match the workspace dependency names." >&2
-    exit 1
-  fi
+echo "Ensuring pnpm is available; skipping dependency install in helper. heroku/nodejs will run the actual install/build."
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "pnpm not found after bootstrap; attempting install..."
+  curl -fsSL https://get.pnpm.io/install.sh | SHELL=bash bash -
+  export PNPM_HOME="$HOME/.local/share/pnpm"
+  export PATH="$PNPM_HOME:$PATH"
 fi
 
 # If Heroku passed env vars via ENV_DIR, read them into the environment so we can use them
